@@ -2,6 +2,8 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 
 import User from "./models/User.js";
 import Device from "./models/Device.js";
@@ -17,55 +19,102 @@ app.use(cors());
 app.use(express.json());
 
 // =======================
-// HEALTH / ROOT ROUTES
+// DATABASE
 // =======================
-
-app.get("/", (req, res) => {
-  res.send("QuantumConnex Backend Running");
-});
-
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "QuantumConnex API" });
-});
-
-// =======================
-// DATABASE CONNECTION
-// =======================
-
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.log("MongoDB error:", err));
 
 // =======================
-// USERS API (CRUD)
+// AUTH MIDDLEWARE
+// =======================
+function auth(req, res, next) {
+  const token = req.headers.authorization;
+
+  if (!token) return res.status(401).json({ error: "No token" });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: "Invalid token" });
+  }
+}
+
+// =======================
+// HEALTH CHECK
+// =======================
+app.get("/", (req, res) => {
+  res.send("QuantumConnex Backend Running");
+});
+
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
+// =======================
+// AUTH ROUTES
 // =======================
 
-// CREATE user
-app.post("/api/users", async (req, res) => {
+// REGISTER
+app.post("/api/auth/register", async (req, res) => {
   try {
-    const user = await User.create(req.body);
-    res.json(user);
+    const { name, email, password } = req.body;
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      name,
+      email,
+      password: hashedPassword
+    });
+
+    res.json({ message: "User created", user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET all users
-app.get("/api/users", async (req, res) => {
+// LOGIN
+app.post("/api/auth/login", async (req, res) => {
   try {
-    const users = await User.find();
-    res.json(users);
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) return res.status(400).json({ error: "User not found" });
+
+    const valid = await bcrypt.compare(password, user.password);
+
+    if (!valid) return res.status(400).json({ error: "Invalid password" });
+
+    const token = jwt.sign(
+      { id: user._id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({ token, user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // =======================
-// DEVICES API (CRUD)
+// USERS (optional basic)
+// =======================
+app.get("/api/users", auth, async (req, res) => {
+  const users = await User.find();
+  res.json(users);
+});
+
+// =======================
+// DEVICES (PROTECTED)
 // =======================
 
-// CREATE device
-app.post("/api/devices", async (req, res) => {
+// CREATE DEVICE
+app.post("/api/devices", auth, async (req, res) => {
   try {
     const device = await Device.create(req.body);
     res.json(device);
@@ -74,8 +123,8 @@ app.post("/api/devices", async (req, res) => {
   }
 });
 
-// GET devices
-app.get("/api/devices", async (req, res) => {
+// GET DEVICES
+app.get("/api/devices", auth, async (req, res) => {
   try {
     const devices = await Device.find();
     res.json(devices);
@@ -85,9 +134,8 @@ app.get("/api/devices", async (req, res) => {
 });
 
 // =======================
-// SERVER START
+// START SERVER
 // =======================
-
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
