@@ -1,9 +1,17 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const deviceSchema = new mongoose.Schema({
-  name: String,
-  type: String,
-  status: String,
+  userId: String,
+  deviceName: String,
+  deviceType: String,
+  status: {
+    type: String,
+    default: "active"
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
 });
 
-module.exports = mongoose.model("Device", deviceSchema);
+export default mongoose.model("Device", deviceSchema);
