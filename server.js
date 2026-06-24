@@ -1,143 +1,62 @@
-import express from "express";
-import mongoose from "mongoose";
-import dotenv from "dotenv";
-import cors from "cors";
-import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
-
-import User from "./models/User.js";
-import Device from "./models/Device.js";
+const express  = require("express");
+const cors     = require("cors");
+const dotenv   = require("dotenv");
+const http     = require("http");
+const mongoose = require("mongoose");
+const { Server } = require("socket.io");
 
 dotenv.config();
 
-const app = express();
+const app    = express();
+const server = http.createServer(app);
 
-// =======================
-// MIDDLEWARE
-// =======================
+const io = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] },
+    transports: ["websocket"],
+});
+
 app.use(cors());
 app.use(express.json());
 
-// =======================
-// DATABASE
-// =======================
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch((err) => console.log("MongoDB error:", err));
+const recoveryRoutes  = require("./routes/recovery");
+const authRoutes      = require("./routes/authRoutes");
+const deviceRoutes    = require("./routes/deviceRoutes");
+const commandRoutes   = require("./routes/commandRoutes");
+const pairingRoutes   = require("./routes/pairingRoutes");
+const networkRoutes   = require("./routes/networkRoutes");
+const chatRoutes      = require("./routes/chatRoutes");
+const locationRoutes  = require("./routes/locationRoutes");
 
-// =======================
-// AUTH MIDDLEWARE
-// =======================
-function auth(req, res, next) {
-  const token = req.headers.authorization;
-
-  if (!token) return res.status(401).json({ error: "No token" });
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    res.status(401).json({ error: "Invalid token" });
-  }
-}
-
-// =======================
-// HEALTH CHECK
-// =======================
 app.get("/", (req, res) => {
-  res.send("QuantumConnex Backend Running");
+    res.json({ status: "online", service: "QuantumConnex Backend", version: "2.0.0" });
 });
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
-});
+app.use("/api/recovery",  recoveryRoutes);
+app.use("/api/auth",      authRoutes);
+app.use("/api/devices",   deviceRoutes);
+app.use("/api/commands",  commandRoutes);
+app.use("/api/pairing",   pairingRoutes);
+app.use("/api/network",   networkRoutes);
+app.use("/api/chat",      chatRoutes);
+app.use("/api/locations", locationRoutes);
 
-// =======================
-// AUTH ROUTES
-// =======================
+const { setIO } = require("./services/deviceControlLayer");
+setIO(io);
 
-// REGISTER
-app.post("/api/auth/register", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
+const socketHandler = require("./socket/index");
+socketHandler(io);
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = await User.create({
-      name,
-      email,
-      password: hashedPassword
-    });
-
-    res.json({ message: "User created", user });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// LOGIN
-app.post("/api/auth/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const user = await User.findOne({ email });
-
-    if (!user) return res.status(400).json({ error: "User not found" });
-
-    const valid = await bcrypt.compare(password, user.password);
-
-    if (!valid) return res.status(400).json({ error: "Invalid password" });
-
-    const token = jwt.sign(
-      { id: user._id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.json({ token, user });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// =======================
-// USERS (optional basic)
-// =======================
-app.get("/api/users", auth, async (req, res) => {
-  const users = await User.find();
-  res.json(users);
-});
-
-// =======================
-// DEVICES (PROTECTED)
-// =======================
-
-// CREATE DEVICE
-app.post("/api/devices", auth, async (req, res) => {
-  try {
-    const device = await Device.create(req.body);
-    res.json(device);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET DEVICES
-app.get("/api/devices", auth, async (req, res) => {
-  try {
-    const devices = await Device.find();
-    res.json(devices);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// =======================
-// START SERVER
-// =======================
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => {
+        console.log("MongoDB connected");
+        server.listen(PORT, () => {
+            console.log(`QuantumConnex running on port ${PORT}`);
+        });
+    })
+    .catch((err) => {
+        console.error("MongoDB connection failed:", err.message);
+        process.exit(1);
+    });
